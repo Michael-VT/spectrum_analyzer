@@ -1,5 +1,10 @@
 # Audio File Spectrum Analyzer
 
+
+![Spectrum Analyzer Screenshot](image/test_mixed.png)
+<img src="image/test_800hz.png" alt="Описание" width="300"/>
+<img src="image/test_1200hz.png" alt="Описание" width="300"/>
+
 A Rust program for displaying the spectral characteristics of WAV files (16‑bit PCM). It plots the amplitude spectrum in decibels, detects peaks with levels above 50% of the maximum, and provides a brief description of each detected frequency (fundamental tone, harmonics, etc.).
 
 ## Features
