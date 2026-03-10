@@ -4,10 +4,10 @@ use std::path::Path;
 use hound::{WavReader, SampleFormat};
 use rustfft::{FftPlanner, num_complex::Complex};
 use plotters::prelude::*;
+use plotters::style::text_anchor::{Pos, HPos, VPos};
 use minifb::{Window, WindowOptions, Key};
 
 /// Читает WAV-файл и возвращает моно‑сэмплы (f32) и частоту дискретизации.
-/// Поддерживает только 16‑битные PCM файлы.
 fn read_wav<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, u32), Box<dyn Error>> {
     let mut reader = WavReader::open(path)?;
     let spec = reader.spec();
@@ -37,8 +37,7 @@ fn read_wav<P: AsRef<Path>>(path: P) -> Result<(Vec<f32>, u32), Box<dyn Error>> 
     Ok((mono, sample_rate))
 }
 
-/// Вычисляет односторонний амплитудный спектр (в децибелах) для моно‑сигнала.
-/// Возвращает векторы частот (Гц) и амплитуд (дБ).
+/// Вычисляет односторонний амплитудный спектр (в децибелах).
 fn compute_spectrum(samples: &[f32], sample_rate: u32) -> (Vec<f64>, Vec<f64>) {
     let n = samples.len();
     let fft_size = n.next_power_of_two();
@@ -67,10 +66,67 @@ fn compute_spectrum(samples: &[f32], sample_rate: u32) -> (Vec<f64>, Vec<f64>) {
     (freqs, mags)
 }
 
-/// Рисует спектрограмму в буфер RGB и возвращает его.
-fn plot_spectrum(
+/// Находит пики (локальные максимумы) в спектре, превышающие порог относительно глобального максимума.
+/// Порог задаётся в линейных относительных единицах (например, 0.5 означает 50% от максимальной амплитуды).
+/// Возвращает вектор (частота, амплитуда_дБ).
+fn find_peaks(freqs: &[f64], mags: &[f64], threshold_linear: f64) -> Vec<(f64, f64)> {
+    // Переводим порог в децибелы относительно максимума
+    let max_mag = mags.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    let threshold_db = max_mag + 20.0 * threshold_linear.log10(); // 20*log10(threshold)
+
+    let mut peaks = Vec::new();
+    let n = mags.len();
+
+    // Ищем локальные максимумы (игнорируем края)
+    for i in 1..n-1 {
+        if mags[i] > mags[i-1] && mags[i] > mags[i+1] && mags[i] >= threshold_db {
+            peaks.push((freqs[i], mags[i]));
+        }
+    }
+
+    peaks
+}
+
+/// Возвращает текстовое описание для частоты относительно основной частоты (самого сильного пика).
+fn describe_frequency(freq: f64, base_freq: f64) -> String {
+    if base_freq <= 0.0 {
+        return "неизвестно".to_string();
+    }
+    let ratio = freq / base_freq;
+    let tolerance = 0.02; // допуск 2% для определения гармоник
+
+    if (ratio - 1.0).abs() < tolerance {
+        "основной тон".to_string()
+    } else if (ratio - 2.0).abs() < tolerance {
+        "вторая гармоника".to_string()
+    } else if (ratio - 3.0).abs() < tolerance {
+        "третья гармоника".to_string()
+    } else if (ratio - 4.0).abs() < tolerance {
+        "четвёртая гармоника".to_string()
+    } else if (ratio - 5.0).abs() < tolerance {
+        "пятая гармоника".to_string()
+    } else if ratio.fract() < tolerance || (1.0 - ratio.fract()) < tolerance {
+        // приблизительно целое число
+        let harmonic = ratio.round();
+        if harmonic >= 2.0 && harmonic <= 10.0 {
+            format!("{:.0}‑я гармоника", harmonic)
+        } else {
+            "высшая гармоника".to_string()
+        }
+    } else if freq < 250.0 {
+        "низкочастотная составляющая".to_string()
+    } else if freq < 2000.0 {
+        "среднечастотная составляющая".to_string()
+    } else {
+        "высокочастотная составляющая".to_string()
+    }
+}
+
+/// Рисует спектр и отмечает найденные пики.
+fn plot_spectrum_with_peaks(
     freqs: &[f64],
     mags: &[f64],
+    peaks: &[(f64, f64)],
     width: usize,
     height: usize,
     title: &str,
@@ -104,6 +160,7 @@ fn plot_spectrum(
             .draw()
             .unwrap();
 
+        // Рисуем спектр
         chart.draw_series(LineSeries::new(
             freqs.iter().zip(mags.iter()).map(|(&f, &m)| (f as f32, m as f32)),
             &RED,
@@ -111,11 +168,31 @@ fn plot_spectrum(
             .label("Спектр")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 10, y)], &RED));
 
+        // Отмечаем пики красными кружками
+        chart.draw_series(peaks.iter().map(|&(f, m)| {
+            Circle::new((f as f32, m as f32), 5, RED.filled())
+        })).unwrap()
+            .label("Пики >50%")
+            .legend(|(x, y)| Circle::new((x, y), 5, RED.filled()));
+
         chart.configure_series_labels()
             .background_style(&WHITE.mix(0.8))
             .border_style(&BLACK)
             .draw()
             .unwrap();
+
+        // Добавляем подписи к пикам (частоты)
+        for (f, m) in peaks {
+            let text = format!("{:.1} Гц", f);
+            chart.draw_series(std::iter::once(
+                Text::new(text, (f as f32, m as f32 + 2.0), ("sans-serif", 12).into_font())
+                    .style(TextStyle {
+                        color: BLUE.to_rgba(),
+                        font: ("sans-serif", 12).into_font(),
+                        pos: Pos::new(HPos::Center, VPos::Bottom),
+                    })
+            )).unwrap();
+        }
     }
 
     buf
@@ -133,12 +210,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (freqs, mags) = compute_spectrum(&samples, sample_rate);
     println!("Спектр вычислен. Диапазон частот: 0 .. {:.1} Гц", freqs.last().unwrap());
 
+    // Поиск пиков с порогом 50% от максимума (линейная амплитуда)
+    let peaks = find_peaks(&freqs, &mags, 0.5);
+    println!("Найдено пиков с уровнем >50%: {}", peaks.len());
+
+    // Определяем основную частоту (самый сильный пик)
+    let base_freq = if !peaks.is_empty() {
+        peaks.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().0
+    } else {
+        0.0
+    };
+
+    // Выводим информацию о каждом пике
+    for (i, (freq, db)) in peaks.iter().enumerate() {
+        let desc = describe_frequency(*freq, base_freq);
+        println!("{}. Частота: {:.1} Гц, уровень: {:.1} дБ — {}", i+1, freq, db, desc);
+    }
+
     let width = 900;
     let height = 600;
     let title = format!("Спектр файла: {}", filename);
-    let rgb_buf = plot_spectrum(&freqs, &mags, width, height, &title);
+    let rgb_buf = plot_spectrum_with_peaks(&freqs, &mags, &peaks, width, height, &title);
 
-    // Конвертируем RGB → ARGB (u32) для minifb
     let fb: Vec<u32> = rgb_buf
         .chunks_exact(3)
         .map(|rgb| 0xFF000000 | ((rgb[0] as u32) << 16) | ((rgb[1] as u32) << 8) | (rgb[2] as u32))
