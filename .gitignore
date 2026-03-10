@@ -1,1 +1,18 @@
 /target
+# Generated build artifacts
+/target/
+
+# Lock files for libraries (for applications Cargo.lock is usually committed, so not ignored)
+# If you want to ignore Cargo.lock, uncomment the following line:
+# Cargo.lock
+
+# Editor temporary files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# IDE directories
+.vscode/
+.idea/
+*.iml

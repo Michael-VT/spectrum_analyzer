@@ -70,14 +70,12 @@ fn compute_spectrum(samples: &[f32], sample_rate: u32) -> (Vec<f64>, Vec<f64>) {
 /// Порог задаётся в линейных относительных единицах (например, 0.5 означает 50% от максимальной амплитуды).
 /// Возвращает вектор (частота, амплитуда_дБ).
 fn find_peaks(freqs: &[f64], mags: &[f64], threshold_linear: f64) -> Vec<(f64, f64)> {
-    // Переводим порог в децибелы относительно максимума
     let max_mag = mags.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-    let threshold_db = max_mag + 20.0 * threshold_linear.log10(); // 20*log10(threshold)
+    let threshold_db = max_mag + 20.0 * threshold_linear.log10();
 
     let mut peaks = Vec::new();
     let n = mags.len();
 
-    // Ищем локальные максимумы (игнорируем края)
     for i in 1..n-1 {
         if mags[i] > mags[i-1] && mags[i] > mags[i+1] && mags[i] >= threshold_db {
             peaks.push((freqs[i], mags[i]));
@@ -87,13 +85,13 @@ fn find_peaks(freqs: &[f64], mags: &[f64], threshold_linear: f64) -> Vec<(f64, f
     peaks
 }
 
-/// Возвращает текстовое описание для частоты относительно основной частоты (самого сильного пика).
+/// Возвращает текстовое описание для частоты относительно основной частоты.
 fn describe_frequency(freq: f64, base_freq: f64) -> String {
     if base_freq <= 0.0 {
         return "неизвестно".to_string();
     }
     let ratio = freq / base_freq;
-    let tolerance = 0.02; // допуск 2% для определения гармоник
+    let tolerance = 0.02;
 
     if (ratio - 1.0).abs() < tolerance {
         "основной тон".to_string()
@@ -106,7 +104,6 @@ fn describe_frequency(freq: f64, base_freq: f64) -> String {
     } else if (ratio - 5.0).abs() < tolerance {
         "пятая гармоника".to_string()
     } else if ratio.fract() < tolerance || (1.0 - ratio.fract()) < tolerance {
-        // приблизительно целое число
         let harmonic = ratio.round();
         if harmonic >= 2.0 && harmonic <= 10.0 {
             format!("{:.0}‑я гармоника", harmonic)
@@ -160,7 +157,7 @@ fn plot_spectrum_with_peaks(
             .draw()
             .unwrap();
 
-        // Рисуем спектр
+        // Спектр
         chart.draw_series(LineSeries::new(
             freqs.iter().zip(mags.iter()).map(|(&f, &m)| (f as f32, m as f32)),
             &RED,
@@ -168,7 +165,7 @@ fn plot_spectrum_with_peaks(
             .label("Спектр")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 10, y)], &RED));
 
-        // Отмечаем пики красными кружками
+        // Пики (кружки)
         chart.draw_series(peaks.iter().map(|&(f, m)| {
             Circle::new((f as f32, m as f32), 5, RED.filled())
         })).unwrap()
@@ -181,16 +178,14 @@ fn plot_spectrum_with_peaks(
             .draw()
             .unwrap();
 
-        // Добавляем подписи к пикам (частоты)
-        for (f, m) in peaks {
+        // Подписи частот рядом с пиками
+        for &(f, m) in peaks {
             let text = format!("{:.1} Гц", f);
+            let text_style = TextStyle::from(("sans-serif", 12).into_font())
+                .color(&BLUE)
+                .pos(Pos::new(HPos::Center, VPos::Bottom));
             chart.draw_series(std::iter::once(
-                Text::new(text, (f as f32, m as f32 + 2.0), ("sans-serif", 12).into_font())
-                    .style(TextStyle {
-                        color: BLUE.to_rgba(),
-                        font: ("sans-serif", 12).into_font(),
-                        pos: Pos::new(HPos::Center, VPos::Bottom),
-                    })
+                Text::new(text, (f as f32, m as f32 + 2.0), text_style)
             )).unwrap();
         }
     }
@@ -210,18 +205,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (freqs, mags) = compute_spectrum(&samples, sample_rate);
     println!("Спектр вычислен. Диапазон частот: 0 .. {:.1} Гц", freqs.last().unwrap());
 
-    // Поиск пиков с порогом 50% от максимума (линейная амплитуда)
     let peaks = find_peaks(&freqs, &mags, 0.5);
     println!("Найдено пиков с уровнем >50%: {}", peaks.len());
 
-    // Определяем основную частоту (самый сильный пик)
     let base_freq = if !peaks.is_empty() {
         peaks.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().0
     } else {
         0.0
     };
 
-    // Выводим информацию о каждом пике
     for (i, (freq, db)) in peaks.iter().enumerate() {
         let desc = describe_frequency(*freq, base_freq);
         println!("{}. Частота: {:.1} Гц, уровень: {:.1} дБ — {}", i+1, freq, db, desc);
@@ -237,13 +229,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map(|rgb| 0xFF000000 | ((rgb[0] as u32) << 16) | ((rgb[1] as u32) << 8) | (rgb[2] as u32))
         .collect();
 
-    let mut window = Window::new(
-        &title,
-        width,
-        height,
-        WindowOptions::default(),
-    )?;
-
+    let mut window = Window::new(&title, width, height, WindowOptions::default())?;
     window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
